@@ -756,31 +756,197 @@ func WiFiFailedEffect() error {
 	})
 }
 
-// PartyEffect implements party effect:
-// Red, green, blue flashing in sequence for 100ms each, 10 seconds total
+// PartyEffect implements a complex light show with different patterns over 9 seconds
 func PartyEffect() error {
 	return runTimedEffect(func(stop <-chan bool) {
 		startTime := time.Now()
-		colors := []Color{ColorRed, ColorGreen, ColorBlue}
-		colorIndex := 0
+		totalDuration := 9 * time.Second
 
-		for time.Since(startTime) < 10*time.Second {
+		// 用于控制红灯的计时器
+		redLightTimer := time.NewTimer(3 * time.Second)
+		defer redLightTimer.Stop()
+
+		// 主循环，持续9秒
+		for time.Since(startTime) < totalDuration {
+			currentTime := time.Since(startTime)
+			currentSecond := int(currentTime.Seconds()) + 1 // 从第1秒开始
+
+			// 检查是否需要停止
 			select {
 			case <-stop:
 				setColor(ColorOff)
 				return
 			default:
-				setColor(colors[colorIndex])
-				colorIndex = (colorIndex + 1) % len(colors)
+				// 继续执行
+			}
 
+			// 根据当前时间执行不同的灯光效果
+			switch {
+			case currentSecond == 1: // 第1秒
+				// 处理红灯（每隔3秒亮起300ms）
 				select {
-				case <-stop:
-					setColor(ColorOff)
-					return
-				case <-time.After(100 * time.Millisecond):
+				case <-redLightTimer.C:
+					// 红灯亮起
+					setRed(255)
+					time.Sleep(300 * time.Millisecond)
+					setRed(0)
+					redLightTimer.Reset(3 * time.Second)
+				default:
+					// 不做任何事
+				}
+
+				// 处理蓝灯（每50ms闪烁一次，亮200ms，熄灭50ms，亮度波动）
+				blueIntensity := 150 + int(50*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-200
+				setBlue(blueIntensity)
+				time.Sleep(200 * time.Millisecond)
+				setBlue(0)
+				time.Sleep(50 * time.Millisecond)
+
+				// 处理绿灯（每100ms闪烁一次，亮200ms，熄灭100ms，亮度渐变）
+				greenProgress := float64(currentTime.Milliseconds()%1000) / 1000.0 // 0-1之间的渐变进度
+				greenIntensity := int(100 + 155*greenProgress)                     // 亮度从100到255渐变
+				setGreen(greenIntensity)
+				time.Sleep(200 * time.Millisecond)
+				setGreen(0)
+				time.Sleep(100 * time.Millisecond)
+
+			case currentSecond >= 2 && currentSecond <= 4: // 第2-4秒
+				// 处理红灯（每隔3秒亮起300ms）
+				select {
+				case <-redLightTimer.C:
+					// 红灯亮起
+					setRed(255)
+					time.Sleep(300 * time.Millisecond)
+					setRed(0)
+					redLightTimer.Reset(3 * time.Second)
+				default:
+					// 不做任何事
+				}
+
+				// 处理蓝灯（每50ms闪烁一次，亮200ms，熄灭50ms，亮度波动）
+				blueIntensity := 150 + int(50*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-200
+				setBlue(blueIntensity)
+				time.Sleep(200 * time.Millisecond)
+				setBlue(0)
+				time.Sleep(50 * time.Millisecond)
+
+				// 处理绿灯（每100ms闪烁一次，亮200ms，熄灭100ms，亮度波动）
+				greenIntensity := 150 + int(50*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-200
+				setGreen(greenIntensity)
+				time.Sleep(200 * time.Millisecond)
+				setGreen(0)
+				time.Sleep(100 * time.Millisecond)
+
+			case currentSecond == 5: // 第5秒
+				// 多彩过渡：蓝色渐变到紫色，紫色渐变为绿色，再从绿色渐变为黄色，整个过程持续500ms
+				transitionStart := time.Now()
+				for time.Since(transitionStart) < 500*time.Millisecond {
+					progress := float64(time.Since(transitionStart).Milliseconds()) / 500.0 // 0-1之间的进度
+
+					// 根据进度计算当前颜色
+					var r, g, b int
+					if progress < 0.33 { // 蓝色到紫色
+						subProgress := progress / 0.33
+						r = int(255 * subProgress)
+						b = 255
+						g = 0
+					} else if progress < 0.66 { // 紫色到绿色
+						subProgress := (progress - 0.33) / 0.33
+						r = int(255 * (1 - subProgress))
+						b = int(255 * (1 - subProgress))
+						g = int(255 * subProgress)
+					} else { // 绿色到黄色
+						subProgress := (progress - 0.66) / 0.34
+						r = int(255 * subProgress)
+						g = 255
+						b = 0
+					}
+
+					setColor(Color{r, g, b})
+
+					// 检查是否需要停止
+					select {
+					case <-stop:
+						setColor(ColorOff)
+						return
+					default:
+						time.Sleep(10 * time.Millisecond) // 小间隔使过渡更平滑
+					}
+				}
+
+				// 继续处理蓝灯和绿灯的闪烁
+				for i := 0; i < 3; i++ { // 执行几次闪烁循环
+					// 蓝灯：每50ms闪烁一次，亮200ms，熄灭50ms
+					setBlue(200)
+					time.Sleep(200 * time.Millisecond)
+					setBlue(0)
+					time.Sleep(50 * time.Millisecond)
+
+					// 绿灯：每100ms闪烁一次，亮200ms，熄灭100ms
+					setGreen(200)
+					time.Sleep(200 * time.Millisecond)
+					setGreen(0)
+					time.Sleep(100 * time.Millisecond)
+
+					// 红灯点缀
+					if i == 1 {
+						setRed(255)
+						time.Sleep(100 * time.Millisecond)
+						setRed(0)
+					}
+				}
+
+			case currentSecond >= 6 && currentSecond <= 8: // 第6-8秒
+				// 蓝灯：每50ms闪烁一次，亮200ms，熄灭50ms
+				setBlue(200)
+				time.Sleep(200 * time.Millisecond)
+				setBlue(0)
+				time.Sleep(50 * time.Millisecond)
+
+				// 绿灯：每100ms闪烁一次，亮200ms，熄灭100ms
+				setGreen(200)
+				time.Sleep(200 * time.Millisecond)
+				setGreen(0)
+				time.Sleep(100 * time.Millisecond)
+
+			case currentSecond == 9: // 第9秒
+				// 蓝、绿灯交替闪烁，亮度波动
+				for i := 0; i < 5; i++ { // 执行几次交替闪烁
+					// 蓝灯闪烁
+					blueIntensity := 150 + int(100*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-250
+					setBlue(blueIntensity)
+					time.Sleep(100 * time.Millisecond)
+					setBlue(0)
+
+					// 绿灯闪烁
+					greenIntensity := 150 + int(100*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-250
+					setGreen(greenIntensity)
+					time.Sleep(150 * time.Millisecond)
+					setGreen(0)
+
+					// 检查是否需要停止
+					select {
+					case <-stop:
+						setColor(ColorOff)
+						return
+					default:
+						// 继续执行
+					}
 				}
 			}
+
+			// 检查是否需要停止
+			select {
+			case <-stop:
+				setColor(ColorOff)
+				return
+			default:
+				// 继续执行，短暂休眠以避免CPU过度使用
+				time.Sleep(10 * time.Millisecond)
+			}
 		}
+
+		// 效果结束，关闭所有灯
 		setColor(ColorOff)
 	})
 }
