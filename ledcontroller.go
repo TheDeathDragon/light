@@ -15,6 +15,28 @@ const (
 	RedLEDPath   = "/sys/class/leds/sc27xx:red/brightness"
 )
 
+// Effect types
+const (
+	EFFECT_NONE                 = 0
+	EFFECT_BOOTUP               = 1
+	EFFECT_NOTIFICATION         = 2
+	EFFECT_CALL                 = 3
+	EFFECT_CHARGING_LOW         = 4
+	EFFECT_CHARGING_HIGH        = 5
+	EFFECT_CHARGING_COMPLETE    = 6
+	EFFECT_WIFI_CONNECTING      = 7
+	EFFECT_WIFI_CONNECTED       = 8
+	EFFECT_WIFI_FAILED          = 9
+	EFFECT_BLUETOOTH_CONNECTING = 10
+	EFFECT_BLUETOOTH_CONNECTED  = 11
+	EFFECT_BLUETOOTH_FAILED     = 12
+	EFFECT_CAMERA_FOCUS         = 13
+	EFFECT_CAMERA_CAPTURE       = 14
+	EFFECT_CAMERA_SAVE          = 15
+	EFFECT_PARTY                = 16
+	EFFECT_MUSIC                = 17
+)
+
 // Color represents RGB values
 type Color struct {
 	Red   int
@@ -30,9 +52,10 @@ var (
 	ColorOff   = Color{0, 0, 0}
 
 	// Control variables
-	stopChan     chan bool
-	effectActive bool
-	mutex        sync.Mutex
+	stopChan          chan bool
+	effectActive      bool
+	currentEffectType int
+	mutex             sync.Mutex
 )
 
 // Initialize the LED controller
@@ -54,11 +77,16 @@ func StopCurrentEffect() {
 		default:
 			log.Println("StopCurrentEffect: 停止通道已满，无法发送信号")
 		}
-		time.Sleep(50 * time.Millisecond)
+		// Wait for effect to complete
 		log.Println("StopCurrentEffect: 等待完成")
 	} else {
 		log.Println("StopCurrentEffect: 当前没有活动的效果")
 	}
+
+	// Reset current effect type and active state
+	currentEffectType = EFFECT_NONE
+	// 注意：这里不直接设置effectActive = false，因为需要等待goroutine正常结束
+	// 在goroutine结束时会自动设置effectActive = false
 }
 
 // setRed sets the red LED value
@@ -235,7 +263,7 @@ func PulseColor(color Color, pulseCount int, pulseDuration time.Duration, stop <
 
 // BlinkColor implements a blinking effect for a specific color
 func BlinkColor(color Color, blinkCount int, onDuration, offDuration time.Duration, stop <-chan bool) error {
-	for i := 0; i < blinkCount; i++ {
+	for i := 0; blinkCount == 0 || i < blinkCount; i++ {
 		select {
 		case <-stop:
 			setColor(ColorOff)
@@ -255,6 +283,7 @@ func BlinkColor(color Color, blinkCount int, onDuration, offDuration time.Durati
 
 		select {
 		case <-stop:
+			setColor(ColorOff)
 			return nil
 		case <-time.After(offDuration):
 		}
@@ -289,6 +318,7 @@ func CallNotificationEffect() error {
 			setColor(ColorOff)
 			select {
 			case <-stop:
+				setColor(ColorOff) // 虽然LED已经关闭，但为了代码一致性，显式关闭一下
 				return
 			case <-time.After(200 * time.Millisecond):
 			}
@@ -296,20 +326,19 @@ func CallNotificationEffect() error {
 			// 切换颜色
 			isRed = !isRed
 		}
-	})
+	}, EFFECT_CALL)
 }
 
 // NotificationEffect implements notification effect:
 // Green breathing effect, each cycle 2s (1s brighten, 1s dim), continuously until stopped
 func NotificationEffect() error {
-	log.Println("NotificationEffect: 开始通知效果")
 	return runTimedEffect(func(stop <-chan bool) {
-		// 当pulseCount=0时，PulseColor会无限循环，直到收到停止信号
-		// 确保FadeColor在收到停止信号时会关闭LED
-		log.Println("NotificationEffect: 调用PulseColor")
+		log.Println("NotificationEffect: 开始通知效果")
 		PulseColor(ColorGreen, 0, 2*time.Second, stop)
-		log.Println("NotificationEffect: PulseColor返回")
-	})
+		// 确保在函数结束时关闭LED
+		setColor(ColorOff)
+		return // 显式返回，确保goroutine结束
+	}, EFFECT_NOTIFICATION)
 }
 
 // MusicEffect implements music effect
@@ -687,7 +716,7 @@ func MusicEffect() error {
 
 			// 循环结束，重新开始
 		}
-	})
+	}, EFFECT_MUSIC)
 }
 
 // BluetoothConnectingEffect implements Bluetooth connecting effect:
@@ -696,7 +725,8 @@ func BluetoothConnectingEffect() error {
 	return runTimedEffect(func(stop <-chan bool) {
 		BlinkColor(ColorBlue, 0, 300*time.Millisecond, 500*time.Millisecond, stop)
 		setColor(ColorOff)
-	})
+		return // 显式返回，确保goroutine结束
+	}, EFFECT_BLUETOOTH_CONNECTING)
 }
 
 // BluetoothConnectedEffect implements Bluetooth connected effect:
@@ -710,8 +740,9 @@ func BluetoothConnectedEffect() error {
 			return
 		case <-time.After(3 * time.Second):
 			setColor(ColorOff)
+			return // 显式返回，确保goroutine结束
 		}
-	})
+	}, EFFECT_BLUETOOTH_CONNECTED)
 }
 
 // BluetoothFailedEffect implements Bluetooth connection failed effect:
@@ -720,7 +751,8 @@ func BluetoothFailedEffect() error {
 	return runTimedEffect(func(stop <-chan bool) {
 		BlinkColor(ColorRed, 3, 200*time.Millisecond, 400*time.Millisecond, stop)
 		setColor(ColorOff)
-	})
+		return // 显式返回，确保goroutine结束
+	}, EFFECT_BLUETOOTH_FAILED)
 }
 
 // WiFiConnectingEffect implements WiFi connecting effect:
@@ -729,7 +761,8 @@ func WiFiConnectingEffect() error {
 	return runTimedEffect(func(stop <-chan bool) {
 		PulseColor(ColorGreen, 0, 2*time.Second+500*time.Millisecond, stop)
 		setColor(ColorOff)
-	})
+		return // 显式返回，确保goroutine结束
+	}, EFFECT_WIFI_CONNECTING)
 }
 
 // WiFiConnectedEffect implements WiFi connected effect:
@@ -743,8 +776,9 @@ func WiFiConnectedEffect() error {
 			return
 		case <-time.After(3 * time.Second):
 			setColor(ColorOff)
+			return // 显式返回，确保goroutine结束
 		}
-	})
+	}, EFFECT_WIFI_CONNECTED)
 }
 
 // WiFiFailedEffect implements WiFi connection failed effect:
@@ -753,129 +787,153 @@ func WiFiFailedEffect() error {
 	return runTimedEffect(func(stop <-chan bool) {
 		BlinkColor(ColorRed, 3, 300*time.Millisecond, 300*time.Millisecond, stop)
 		setColor(ColorOff)
-	})
+		return // 显式返回，确保goroutine结束
+	}, EFFECT_WIFI_FAILED)
 }
 
 // PartyEffect implements a complex light show with different patterns over 9 seconds
+// Now loops continuously until stopped
 func PartyEffect() error {
 	return runTimedEffect(func(stop <-chan bool) {
-		startTime := time.Now()
-		totalDuration := 9 * time.Second
+		for { // 添加无限循环
+			startTime := time.Now()
+			totalDuration := 9 * time.Second
 
-		// 用于控制红灯的计时器
-		redLightTimer := time.NewTimer(3 * time.Second)
-		defer redLightTimer.Stop()
+			// 用于控制红灯的计时器
+			redLightTimer := time.NewTimer(3 * time.Second)
+			defer redLightTimer.Stop()
 
-		// 主循环，持续9秒
-		for time.Since(startTime) < totalDuration {
-			currentTime := time.Since(startTime)
-			currentSecond := int(currentTime.Seconds()) + 1 // 从第1秒开始
+			// 主循环，持续9秒
+			for time.Since(startTime) < totalDuration {
+				currentTime := time.Since(startTime)
+				currentSecond := int(currentTime.Seconds()) + 1 // 从第1秒开始
 
-			// 检查是否需要停止
-			select {
-			case <-stop:
-				setColor(ColorOff)
-				return
-			default:
-				// 继续执行
-			}
-
-			// 根据当前时间执行不同的灯光效果
-			switch {
-			case currentSecond == 1: // 第1秒
-				// 处理红灯（每隔3秒亮起300ms）
+				// 检查是否需要停止
 				select {
-				case <-redLightTimer.C:
-					// 红灯亮起
-					setRed(255)
-					time.Sleep(300 * time.Millisecond)
-					setRed(0)
-					redLightTimer.Reset(3 * time.Second)
+				case <-stop:
+					setColor(ColorOff)
+					return
 				default:
-					// 不做任何事
+					// 继续执行
 				}
 
-				// 处理蓝灯（每50ms闪烁一次，亮200ms，熄灭50ms，亮度波动）
-				blueIntensity := 150 + int(50*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-200
-				setBlue(blueIntensity)
-				time.Sleep(200 * time.Millisecond)
-				setBlue(0)
-				time.Sleep(50 * time.Millisecond)
-
-				// 处理绿灯（每100ms闪烁一次，亮200ms，熄灭100ms，亮度渐变）
-				greenProgress := float64(currentTime.Milliseconds()%1000) / 1000.0 // 0-1之间的渐变进度
-				greenIntensity := int(100 + 155*greenProgress)                     // 亮度从100到255渐变
-				setGreen(greenIntensity)
-				time.Sleep(200 * time.Millisecond)
-				setGreen(0)
-				time.Sleep(100 * time.Millisecond)
-
-			case currentSecond >= 2 && currentSecond <= 4: // 第2-4秒
-				// 处理红灯（每隔3秒亮起300ms）
-				select {
-				case <-redLightTimer.C:
-					// 红灯亮起
-					setRed(255)
-					time.Sleep(300 * time.Millisecond)
-					setRed(0)
-					redLightTimer.Reset(3 * time.Second)
-				default:
-					// 不做任何事
-				}
-
-				// 处理蓝灯（每50ms闪烁一次，亮200ms，熄灭50ms，亮度波动）
-				blueIntensity := 150 + int(50*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-200
-				setBlue(blueIntensity)
-				time.Sleep(200 * time.Millisecond)
-				setBlue(0)
-				time.Sleep(50 * time.Millisecond)
-
-				// 处理绿灯（每100ms闪烁一次，亮200ms，熄灭100ms，亮度波动）
-				greenIntensity := 150 + int(50*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-200
-				setGreen(greenIntensity)
-				time.Sleep(200 * time.Millisecond)
-				setGreen(0)
-				time.Sleep(100 * time.Millisecond)
-
-			case currentSecond == 5: // 第5秒
-				// 多彩过渡：蓝色渐变到紫色，紫色渐变为绿色，再从绿色渐变为黄色，整个过程持续500ms
-				transitionStart := time.Now()
-				for time.Since(transitionStart) < 500*time.Millisecond {
-					progress := float64(time.Since(transitionStart).Milliseconds()) / 500.0 // 0-1之间的进度
-
-					// 根据进度计算当前颜色
-					var r, g, b int
-					if progress < 0.33 { // 蓝色到紫色
-						subProgress := progress / 0.33
-						r = int(255 * subProgress)
-						b = 255
-						g = 0
-					} else if progress < 0.66 { // 紫色到绿色
-						subProgress := (progress - 0.33) / 0.33
-						r = int(255 * (1 - subProgress))
-						b = int(255 * (1 - subProgress))
-						g = int(255 * subProgress)
-					} else { // 绿色到黄色
-						subProgress := (progress - 0.66) / 0.34
-						r = int(255 * subProgress)
-						g = 255
-						b = 0
-					}
-
-					setColor(Color{r, g, b})
-
-					// 检查是否需要停止
+				// 根据当前时间执行不同的灯光效果
+				switch {
+				case currentSecond == 1: // 第1秒
+					// 处理红灯（每隔3秒亮起300ms）
 					select {
-					case <-stop:
-						setColor(ColorOff)
-						return
+					case <-redLightTimer.C:
+						// 红灯亮起
+						setRed(255)
+						time.Sleep(300 * time.Millisecond)
+						setRed(0)
+						redLightTimer.Reset(3 * time.Second)
 					default:
-						time.Sleep(10 * time.Millisecond) // 小间隔使过渡更平滑
+						// 不做任何事
 					}
-				}
 
-				// 继续处理蓝灯和绿灯的闪烁
-				for i := 0; i < 3; i++ { // 执行几次闪烁循环
+					// 处理蓝灯（每50ms闪烁一次，亮200ms，熄灭50ms，亮度波动）
+					blueIntensity := 150 + int(50*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-200
+					setBlue(blueIntensity)
+					time.Sleep(200 * time.Millisecond)
+					setBlue(0)
+					time.Sleep(50 * time.Millisecond)
+
+					// 处理绿灯（每100ms闪烁一次，亮200ms，熄灭100ms，亮度渐变）
+					greenProgress := float64(currentTime.Milliseconds()%1000) / 1000.0 // 0-1之间的渐变进度
+					greenIntensity := int(100 + 155*greenProgress)                     // 亮度从100到255渐变
+					setGreen(greenIntensity)
+					time.Sleep(200 * time.Millisecond)
+					setGreen(0)
+					time.Sleep(100 * time.Millisecond)
+
+				case currentSecond >= 2 && currentSecond <= 4: // 第2-4秒
+					// 处理红灯（每隔3秒亮起300ms）
+					select {
+					case <-redLightTimer.C:
+						// 红灯亮起
+						setRed(255)
+						time.Sleep(300 * time.Millisecond)
+						setRed(0)
+						redLightTimer.Reset(3 * time.Second)
+					default:
+						// 不做任何事
+					}
+
+					// 处理蓝灯（每50ms闪烁一次，亮200ms，熄灭50ms，亮度波动）
+					blueIntensity := 150 + int(50*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-200
+					setBlue(blueIntensity)
+					time.Sleep(200 * time.Millisecond)
+					setBlue(0)
+					time.Sleep(50 * time.Millisecond)
+
+					// 处理绿灯（每100ms闪烁一次，亮200ms，熄灭100ms，亮度波动）
+					greenIntensity := 150 + int(50*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-200
+					setGreen(greenIntensity)
+					time.Sleep(200 * time.Millisecond)
+					setGreen(0)
+					time.Sleep(100 * time.Millisecond)
+
+				case currentSecond == 5: // 第5秒
+					// 多彩过渡：蓝色渐变到紫色，紫色渐变为绿色，再从绿色渐变为黄色，整个过程持续500ms
+					transitionStart := time.Now()
+					for time.Since(transitionStart) < 500*time.Millisecond {
+						progress := float64(time.Since(transitionStart).Milliseconds()) / 500.0 // 0-1之间的进度
+
+						// 根据进度计算当前颜色
+						var r, g, b int
+						if progress < 0.33 { // 蓝色到紫色
+							subProgress := progress / 0.33
+							r = int(255 * subProgress)
+							b = 255
+							g = 0
+						} else if progress < 0.66 { // 紫色到绿色
+							subProgress := (progress - 0.33) / 0.33
+							r = int(255 * (1 - subProgress))
+							b = int(255 * (1 - subProgress))
+							g = int(255 * subProgress)
+						} else { // 绿色到黄色
+							subProgress := (progress - 0.66) / 0.34
+							r = int(255 * subProgress)
+							g = 255
+							b = 0
+						}
+
+						setColor(Color{r, g, b})
+
+						// 检查是否需要停止
+						select {
+						case <-stop:
+							setColor(ColorOff)
+							return
+						default:
+							time.Sleep(10 * time.Millisecond) // 小间隔使过渡更平滑
+						}
+					}
+
+					// 继续处理蓝灯和绿灯的闪烁
+					for i := 0; i < 3; i++ { // 执行几次闪烁循环
+						// 蓝灯：每50ms闪烁一次，亮200ms，熄灭50ms
+						setBlue(200)
+						time.Sleep(200 * time.Millisecond)
+						setBlue(0)
+						time.Sleep(50 * time.Millisecond)
+
+						// 绿灯：每100ms闪烁一次，亮200ms，熄灭100ms
+						setGreen(200)
+						time.Sleep(200 * time.Millisecond)
+						setGreen(0)
+						time.Sleep(100 * time.Millisecond)
+
+						// 红灯点缀
+						if i == 1 {
+							setRed(255)
+							time.Sleep(100 * time.Millisecond)
+							setRed(0)
+						}
+					}
+
+				case currentSecond >= 6 && currentSecond <= 8: // 第6-8秒
 					// 蓝灯：每50ms闪烁一次，亮200ms，熄灭50ms
 					setBlue(200)
 					time.Sleep(200 * time.Millisecond)
@@ -888,67 +946,53 @@ func PartyEffect() error {
 					setGreen(0)
 					time.Sleep(100 * time.Millisecond)
 
-					// 红灯点缀
-					if i == 1 {
-						setRed(255)
+				case currentSecond == 9: // 第9秒
+					// 蓝、绿灯交替闪烁，亮度波动
+					for i := 0; i < 5; i++ { // 执行几次交替闪烁
+						// 蓝灯闪烁
+						blueIntensity := 150 + int(100*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-250
+						setBlue(blueIntensity)
 						time.Sleep(100 * time.Millisecond)
-						setRed(0)
+						setBlue(0)
+
+						// 绿灯闪烁
+						greenIntensity := 150 + int(100*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-250
+						setGreen(greenIntensity)
+						time.Sleep(150 * time.Millisecond)
+						setGreen(0)
+
+						// 检查是否需要停止
+						select {
+						case <-stop:
+							setColor(ColorOff)
+							return
+						default:
+							// 继续执行
+						}
 					}
 				}
 
-			case currentSecond >= 6 && currentSecond <= 8: // 第6-8秒
-				// 蓝灯：每50ms闪烁一次，亮200ms，熄灭50ms
-				setBlue(200)
-				time.Sleep(200 * time.Millisecond)
-				setBlue(0)
-				time.Sleep(50 * time.Millisecond)
-
-				// 绿灯：每100ms闪烁一次，亮200ms，熄灭100ms
-				setGreen(200)
-				time.Sleep(200 * time.Millisecond)
-				setGreen(0)
-				time.Sleep(100 * time.Millisecond)
-
-			case currentSecond == 9: // 第9秒
-				// 蓝、绿灯交替闪烁，亮度波动
-				for i := 0; i < 5; i++ { // 执行几次交替闪烁
-					// 蓝灯闪烁
-					blueIntensity := 150 + int(100*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-250
-					setBlue(blueIntensity)
-					time.Sleep(100 * time.Millisecond)
-					setBlue(0)
-
-					// 绿灯闪烁
-					greenIntensity := 150 + int(100*float64(time.Now().UnixNano()%100)/100.0) // 亮度波动150-250
-					setGreen(greenIntensity)
-					time.Sleep(150 * time.Millisecond)
-					setGreen(0)
-
-					// 检查是否需要停止
-					select {
-					case <-stop:
-						setColor(ColorOff)
-						return
-					default:
-						// 继续执行
-					}
+				// 检查是否需要停止
+				select {
+				case <-stop:
+					setColor(ColorOff)
+					return
+				default:
+					// 继续执行，短暂休眠以避免CPU过度使用
+					time.Sleep(10 * time.Millisecond)
 				}
 			}
 
-			// 检查是否需要停止
+			// 检查是否需要停止，在开始下一个循环前
 			select {
 			case <-stop:
 				setColor(ColorOff)
 				return
 			default:
-				// 继续执行，短暂休眠以避免CPU过度使用
-				time.Sleep(10 * time.Millisecond)
+				// 继续执行下一个循环
 			}
 		}
-
-		// 效果结束，关闭所有灯
-		setColor(ColorOff)
-	})
+	}, EFFECT_PARTY)
 }
 
 // ChargingLowBatteryEffect implements low battery charging effect:
@@ -957,7 +1001,8 @@ func ChargingLowBatteryEffect() error {
 	return runTimedEffect(func(stop <-chan bool) {
 		PulseColor(ColorRed, 0, 2*time.Second, stop)
 		setColor(ColorOff)
-	})
+		return // 显式返回，确保goroutine结束
+	}, EFFECT_CHARGING_LOW)
 }
 
 // ChargingHighBatteryEffect implements high battery charging effect:
@@ -966,14 +1011,26 @@ func ChargingHighBatteryEffect() error {
 	return runTimedEffect(func(stop <-chan bool) {
 		PulseColor(ColorGreen, 0, 2*time.Second, stop)
 		setColor(ColorOff)
-	})
+		return // 显式返回，确保goroutine结束
+	}, EFFECT_CHARGING_HIGH)
 }
 
 // ChargingCompleteEffect implements charging complete effect:
 // Solid blue light
 func ChargingCompleteEffect() error {
-	StopCurrentEffect()
-	return setColor(ColorBlue)
+	return runTimedEffect(func(stop <-chan bool) {
+		setColor(ColorBlue)
+		// 使用无限循环定期检查停止信号，避免永久阻塞
+		for {
+			select {
+			case <-stop:
+				setColor(ColorOff)
+				return
+			case <-time.After(100 * time.Millisecond):
+				// 定期检查，不做任何事
+			}
+		}
+	}, EFFECT_CHARGING_COMPLETE)
 }
 
 // CameraFocusEffect implements camera focus effect:
@@ -988,8 +1045,9 @@ func CameraFocusEffect() error {
 			return
 		case <-time.After(2 * time.Second):
 			setColor(ColorOff)
+			return // 显式返回，确保goroutine结束
 		}
-	})
+	}, EFFECT_CAMERA_FOCUS)
 }
 
 // CameraCaptureEffect implements camera capture effect:
@@ -1009,6 +1067,7 @@ func CameraCaptureEffect() error {
 		setColor(ColorOff)
 		select {
 		case <-stop:
+			setColor(ColorOff) // 为了一致性，显式关闭LED
 			return
 		case <-time.After(500 * time.Millisecond):
 		}
@@ -1022,8 +1081,10 @@ func CameraCaptureEffect() error {
 		case <-time.After(200 * time.Millisecond):
 		}
 
+		// 关闭LED并返回，确保goroutine结束
 		setColor(ColorOff)
-	})
+		return // 显式返回，确保goroutine结束
+	}, EFFECT_CAMERA_CAPTURE)
 }
 
 // CameraSavePhotoEffect implements camera save photo effect:
@@ -1037,41 +1098,283 @@ func CameraSavePhotoEffect() error {
 			return
 		case <-time.After(1 * time.Second):
 			setColor(ColorOff)
+			return // 显式返回，确保goroutine结束
 		}
-	})
+	}, EFFECT_CAMERA_SAVE)
 }
 
 // BootupEffect implements boot-up effect:
-// Red -> Green -> Blue sequence, each color for 1s with 0.2s interval
+// Complex sequence with smooth transitions and solid colors
 func BootupEffect() error {
 	return runTimedEffect(func(stop <-chan bool) {
-		colors := []Color{ColorRed, ColorGreen, ColorBlue}
+		log.Println("BootupEffect: 开始执行启动灯效")
 
-		for _, color := range colors {
-			// Show color
-			setColor(color)
+		// 第一至二秒: 平滑渐变
+		// 0-0.5S 绿0-180、蓝255-180
+		startTime := time.Now()
+		duration := 500 * time.Millisecond
+		for time.Since(startTime) < duration {
+			progress := float64(time.Since(startTime)) / float64(duration)
+			green := int(180 * progress)
+			blue := 255 - int(75*progress) // 255 到 180
+
+			setColor(Color{0, green, blue})
+
 			select {
 			case <-stop:
+				log.Println("BootupEffect: 在第一阶段收到停止信号")
 				setColor(ColorOff)
 				return
-			case <-time.After(1 * time.Second):
-			}
-
-			// Interval
-			setColor(ColorOff)
-			select {
-			case <-stop:
-				return
-			case <-time.After(200 * time.Millisecond):
+			case <-time.After(10 * time.Millisecond): // 短暂休眠使渐变更平滑
 			}
 		}
 
+		// 0.5-1S 绿180-255、蓝180-255
+		startTime = time.Now()
+		duration = 500 * time.Millisecond
+		for time.Since(startTime) < duration {
+			progress := float64(time.Since(startTime)) / float64(duration)
+			green := 180 + int(75*progress) // 180 到 255
+			blue := 180 + int(75*progress)  // 180 到 255
+
+			setColor(Color{0, green, blue})
+
+			select {
+			case <-stop:
+				log.Println("BootupEffect: 在第二阶段收到停止信号")
+				setColor(ColorOff)
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+
+		// 1S-1.5S 绿255-100、红0-100
+		startTime = time.Now()
+		duration = 500 * time.Millisecond
+		for time.Since(startTime) < duration {
+			progress := float64(time.Since(startTime)) / float64(duration)
+			red := int(100 * progress)       // 0 到 100
+			green := 255 - int(155*progress) // 255 到 100
+
+			setColor(Color{red, green, 0})
+
+			select {
+			case <-stop:
+				log.Println("BootupEffect: 在第三阶段收到停止信号")
+				setColor(ColorOff)
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+
+		// 1.5S-2S 绿100-255，红100-255
+		startTime = time.Now()
+		duration = 500 * time.Millisecond
+		for time.Since(startTime) < duration {
+			progress := float64(time.Since(startTime)) / float64(duration)
+			red := 100 + int(155*progress)   // 100 到 255
+			green := 100 + int(155*progress) // 100 到 255
+
+			setColor(Color{red, green, 0})
+
+			select {
+			case <-stop:
+				log.Println("BootupEffect: 在第四阶段收到停止信号")
+				setColor(ColorOff)
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+
+		// 第三至四秒: 交替常亮
+		// 2S-2.4S 常亮绿灯
+		setColor(ColorGreen)
+		select {
+		case <-stop:
+			log.Println("BootupEffect: 在2-2.4S阶段收到停止信号")
+			setColor(ColorOff)
+			return
+		case <-time.After(400 * time.Millisecond):
+		}
+
+		// 2.4-2.8S 常亮蓝灯
+		setColor(ColorBlue)
+		select {
+		case <-stop:
+			log.Println("BootupEffect: 在2.4-2.8S阶段收到停止信号")
+			setColor(ColorOff)
+			return
+		case <-time.After(400 * time.Millisecond):
+		}
+
+		// 2.8S-3.2S 常亮绿灯
+		setColor(ColorGreen)
+		select {
+		case <-stop:
+			log.Println("BootupEffect: 在2.8-3.2S阶段收到停止信号")
+			setColor(ColorOff)
+			return
+		case <-time.After(400 * time.Millisecond):
+		}
+
+		// 3.2S-3.6S 常亮蓝灯
+		setColor(ColorBlue)
+		select {
+		case <-stop:
+			log.Println("BootupEffect: 在3.2-3.6S阶段收到停止信号")
+			setColor(ColorOff)
+			return
+		case <-time.After(400 * time.Millisecond):
+		}
+
+		// 3.6S-4S 常亮绿灯
+		setColor(ColorGreen)
+		select {
+		case <-stop:
+			log.Println("BootupEffect: 在3.6-4S阶段收到停止信号")
+			setColor(ColorOff)
+			return
+		case <-time.After(400 * time.Millisecond):
+		}
+
+		// 第四至六秒: 混合常亮和渐变
+		// 4-4.5S 常亮橙色（红255，绿100）
+		setColor(Color{255, 100, 0})
+		select {
+		case <-stop:
+			log.Println("BootupEffect: 在4-4.5S阶段收到停止信号")
+			setColor(ColorOff)
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+
+		// 4.5-5S 蓝80-255
+		startTime = time.Now()
+		duration = 500 * time.Millisecond
+		for time.Since(startTime) < duration {
+			progress := float64(time.Since(startTime)) / float64(duration)
+			blue := 80 + int(175*progress) // 80 到 255
+
+			setColor(Color{0, 0, blue})
+
+			select {
+			case <-stop:
+				log.Println("BootupEffect: 在4.5-5S阶段收到停止信号")
+				setColor(ColorOff)
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+
+		// 5S-5.5S 蓝255-80, 绿0-80
+		startTime = time.Now()
+		duration = 500 * time.Millisecond
+		for time.Since(startTime) < duration {
+			progress := float64(time.Since(startTime)) / float64(duration)
+			blue := 255 - int(175*progress) // 255 到 80
+			green := int(80 * progress)     // 0 到 80
+
+			setColor(Color{0, green, blue})
+
+			select {
+			case <-stop:
+				log.Println("BootupEffect: 在5-5.5S阶段收到停止信号")
+				setColor(ColorOff)
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+
+		// 5.5S-6S 蓝80-255，绿80-255
+		startTime = time.Now()
+		duration = 500 * time.Millisecond
+		for time.Since(startTime) < duration {
+			progress := float64(time.Since(startTime)) / float64(duration)
+			blue := 80 + int(175*progress)  // 80 到 255
+			green := 80 + int(175*progress) // 80 到 255
+
+			setColor(Color{0, green, blue})
+
+			select {
+			case <-stop:
+				log.Println("BootupEffect: 在5.5-6S阶段收到停止信号")
+				setColor(ColorOff)
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+
+		// 第七至八秒: 交替常亮
+		// 6S-6.5S 青色常亮
+		setColor(Color{0, 255, 255})
+		select {
+		case <-stop:
+			log.Println("BootupEffect: 在6-6.5S阶段收到停止信号")
+			setColor(ColorOff)
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+
+		// 6.5S-7S 白色常亮
+		setColor(Color{255, 255, 255})
+		select {
+		case <-stop:
+			log.Println("BootupEffect: 在6.5-7S阶段收到停止信号")
+			setColor(ColorOff)
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+
+		// 7S-7.5S 青色常亮
+		setColor(Color{0, 255, 255})
+		select {
+		case <-stop:
+			log.Println("BootupEffect: 在7-7.5S阶段收到停止信号")
+			setColor(ColorOff)
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+
+		// 7.5S-8S 白色常亮
+		setColor(Color{255, 255, 255})
+		select {
+		case <-stop:
+			log.Println("BootupEffect: 在7.5-8S阶段收到停止信号")
+			setColor(ColorOff)
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+
+		// 第八至九秒: 白色常亮
+		// 8.0-9S 白色常亮
+		setColor(Color{255, 255, 255})
+		select {
+		case <-stop:
+			log.Println("BootupEffect: 在8-9S阶段收到停止信号")
+			setColor(ColorOff)
+			return
+		case <-time.After(1 * time.Second):
+		}
+
+		// 9.0S-12S 蓝色常亮
+		setColor(ColorBlue)
+		select {
+		case <-stop:
+			log.Println("BootupEffect: 在9-12S阶段收到停止信号")
+			setColor(ColorOff)
+			return
+		case <-time.After(3 * time.Second):
+		}
+
+		// 效果结束，关闭所有灯
+		log.Println("BootupEffect: 灯效执行完成，关闭所有灯")
 		setColor(ColorOff)
-	})
+		return // 显式返回，确保goroutine结束
+	}, EFFECT_BOOTUP)
 }
 
 // runTimedEffect runs an effect in a goroutine with proper mutex locking
-func runTimedEffect(effect func(<-chan bool)) error {
+func runTimedEffect(effect func(<-chan bool), effectType int) error {
 	mutex.Lock()
 	log.Println("runTimedEffect: 开始运行效果")
 
@@ -1087,20 +1390,8 @@ func runTimedEffect(effect func(<-chan bool)) error {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// 清空停止通道
-	drainCount := 0
-	for {
-		select {
-		case <-stopChan:
-			drainCount++
-			log.Printf("runTimedEffect: 清空停止通道，已清空%d个信号", drainCount)
-		default:
-			log.Printf("runTimedEffect: 停止通道已清空，共清空%d个信号", drainCount)
-			goto channelDrained
-		}
-	}
-channelDrained:
-
+	// Set the current effect type
+	currentEffectType = effectType
 	effectActive = true
 	log.Println("runTimedEffect: 设置effectActive为true")
 	mutex.Unlock()
@@ -1111,13 +1402,14 @@ channelDrained:
 		localStopChan := make(chan bool, 5)
 		log.Println("runTimedEffect: 创建本地停止通道")
 
+		// 创建一个通道用于通知监听goroutine退出
+		effectDone := make(chan struct{})
+
 		// 创建一个单独的goroutine来监听停止信号
-		// 这个goroutine会一直存在直到收到停止信号
-		stopMonitor := make(chan struct{})
+		// 这个goroutine会一直存在直到收到停止信号或者灯效函数结束
 		go func() {
 			log.Println("runTimedEffect: 启动监听停止信号的goroutine")
 			defer log.Println("runTimedEffect: 监听停止信号的goroutine结束")
-			defer close(stopMonitor)
 
 			for {
 				select {
@@ -1144,6 +1436,10 @@ channelDrained:
 					}
 					log.Println("runTimedEffect: 完成发送所有停止信号")
 					return // 收到停止信号后退出goroutine
+				case <-effectDone:
+					// 灯效函数已经结束，退出监听goroutine
+					log.Println("runTimedEffect: 灯效函数已结束，停止监听")
+					return
 				case <-time.After(100 * time.Millisecond):
 					// 定期检查，防止goroutine永远阻塞
 					if !effectActive {
@@ -1158,13 +1454,23 @@ channelDrained:
 		effect(localStopChan)
 		log.Println("runTimedEffect: effect函数返回")
 
-		// 等待监听goroutine结束
-		<-stopMonitor
-		log.Println("runTimedEffect: 监听goroutine已结束")
+		// 确保LED关闭
+		setColor(ColorOff)
+		log.Println("runTimedEffect: 确保LED关闭")
 
+		// 通知监听goroutine灯效函数已经结束
+		close(effectDone)
+		log.Println("runTimedEffect: 通知监听goroutine灯效函数已结束")
+
+		// 等待一小段时间，确保监听goroutine有足够的时间退出
+		time.Sleep(50 * time.Millisecond)
+		log.Println("runTimedEffect: 等待监听goroutine退出")
+
+		// 更新状态
 		mutex.Lock()
 		effectActive = false
-		log.Println("runTimedEffect: 设置effectActive为false")
+		currentEffectType = EFFECT_NONE // 重置当前效果类型
+		log.Println("runTimedEffect: 设置effectActive为false，重置效果类型")
 		mutex.Unlock()
 		log.Println("runTimedEffect: 效果goroutine结束")
 	}()
@@ -1201,6 +1507,18 @@ func EnableLED(color Color) error {
 func SetRGB(red, green, blue int) error {
 	StopCurrentEffect()
 	return setColor(Color{red, green, blue})
+}
+
+// GetCurrentEffect returns the currently active effect type
+func GetCurrentEffect() int {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	if !effectActive {
+		return EFFECT_NONE
+	}
+
+	return currentEffectType
 }
 
 // IsEffectActive returns whether an effect is currently running
