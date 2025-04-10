@@ -55,6 +55,7 @@ var (
 	stopChan          chan bool
 	effectActive      bool
 	currentEffectType int
+	ledEnabled        bool = true // 默认开启
 	mutex             sync.Mutex
 )
 
@@ -130,14 +131,26 @@ func setBlue(value int) error {
 
 // setColor sets the LED colors
 func setColor(color Color) error {
+	if !IsLEDEnabled() {
+		return nil
+	}
+
+	// 检查颜色值是否在有效范围内
+	if color.Red < 0 || color.Red > 255 ||
+		color.Green < 0 || color.Green > 255 ||
+		color.Blue < 0 || color.Blue > 255 {
+		return fmt.Errorf("颜色值必须在0-255范围内")
+	}
+
+	// 写入颜色值到LED控制文件
 	if err := setRed(color.Red); err != nil {
-		return fmt.Errorf("failed to set red LED: %v", err)
+		return fmt.Errorf("设置红色失败: %v", err)
 	}
 	if err := setGreen(color.Green); err != nil {
-		return fmt.Errorf("failed to set green LED: %v", err)
+		return fmt.Errorf("设置绿色失败: %v", err)
 	}
 	if err := setBlue(color.Blue); err != nil {
-		return fmt.Errorf("failed to set blue LED: %v", err)
+		return fmt.Errorf("设置蓝色失败: %v", err)
 	}
 	return nil
 }
@@ -1526,4 +1539,102 @@ func IsEffectActive() bool {
 	mutex.Lock()
 	defer mutex.Unlock()
 	return effectActive
+}
+
+// SetLEDEnabled Sets the LED enabled state
+func SetLEDEnabled(enabled bool) bool {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	// 保存先前的状态用于判断是否需要关灯
+	prevEnabled := ledEnabled
+
+	// 更新LED总开关状态
+	ledEnabled = enabled
+
+	// 如果关闭LED总开关，立即关闭所有灯光，但不停止正在运行的效果
+	if prevEnabled && !enabled {
+		// 直接关闭所有灯，但不通过setColor防止被IsLEDEnabled()拦截
+		setRed(0)
+		setGreen(0)
+		setBlue(0)
+		log.Println("SetLEDEnabled: 已关闭LED灯光")
+	}
+
+	return true
+}
+
+// IsLEDEnabled returns whether the LED is enabled
+func IsLEDEnabled() bool {
+	mutex.Lock()
+	defer mutex.Unlock()
+	return ledEnabled
+}
+
+// StartEffect starts the specified effect
+func StartEffect(effectType int) bool {
+	if !IsLEDEnabled() {
+		return false
+	}
+
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	// 如果已经有活动效果，先停止它
+	if effectActive {
+		select {
+		case stopChan <- true:
+			log.Println("StartEffect: 发送停止信号")
+		default:
+			log.Println("StartEffect: 停止通道已满，无法发送信号")
+		}
+		// 等待效果停止
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// 创建新停止通道
+	stopChan = make(chan bool, 1)
+	effectActive = true
+	currentEffectType = effectType
+
+	// 根据效果类型启动相应的goroutine
+	switch effectType {
+	case EFFECT_BOOTUP:
+		go BootupEffect()
+	case EFFECT_NOTIFICATION:
+		go NotificationEffect()
+	case EFFECT_CALL:
+		go CallNotificationEffect()
+	case EFFECT_CHARGING_LOW:
+		go ChargingLowBatteryEffect()
+	case EFFECT_CHARGING_HIGH:
+		go ChargingHighBatteryEffect()
+	case EFFECT_CHARGING_COMPLETE:
+		go ChargingCompleteEffect()
+	case EFFECT_WIFI_CONNECTING:
+		go WiFiConnectingEffect()
+	case EFFECT_WIFI_CONNECTED:
+		go WiFiConnectedEffect()
+	case EFFECT_WIFI_FAILED:
+		go WiFiFailedEffect()
+	case EFFECT_BLUETOOTH_CONNECTING:
+		go BluetoothConnectingEffect()
+	case EFFECT_BLUETOOTH_CONNECTED:
+		go BluetoothConnectedEffect()
+	case EFFECT_BLUETOOTH_FAILED:
+		go BluetoothFailedEffect()
+	case EFFECT_PARTY:
+		go PartyEffect()
+	case EFFECT_CAMERA_FOCUS:
+		go CameraFocusEffect()
+	case EFFECT_CAMERA_CAPTURE:
+		go CameraCaptureEffect()
+	case EFFECT_CAMERA_SAVE:
+		go CameraSavePhotoEffect()
+	default:
+		effectActive = false
+		return false
+	}
+
+	return true
 }
