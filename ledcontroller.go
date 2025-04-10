@@ -92,6 +92,14 @@ func StopCurrentEffect() {
 
 // setRed sets the red LED value
 func setRed(value int) error {
+	mutex.Lock()
+	enabled := ledEnabled
+	mutex.Unlock()
+
+	if !enabled {
+		return nil
+	}
+
 	if value < 0 {
 		value = 0
 	}
@@ -105,6 +113,14 @@ func setRed(value int) error {
 
 // setGreen sets the green LED value
 func setGreen(value int) error {
+	mutex.Lock()
+	enabled := ledEnabled
+	mutex.Unlock()
+
+	if !enabled {
+		return nil
+	}
+
 	if value < 0 {
 		value = 0
 	}
@@ -118,6 +134,14 @@ func setGreen(value int) error {
 
 // setBlue sets the blue LED value
 func setBlue(value int) error {
+	mutex.Lock()
+	enabled := ledEnabled
+	mutex.Unlock()
+
+	if !enabled {
+		return nil
+	}
+
 	if value < 0 {
 		value = 0
 	}
@@ -1554,10 +1578,10 @@ func SetLEDEnabled(enabled bool) bool {
 
 	// 如果关闭LED总开关，立即关闭所有灯光，但不停止正在运行的效果
 	if prevEnabled && !enabled {
-		// 直接关闭所有灯，但不通过setColor防止被IsLEDEnabled()拦截
-		setRed(0)
-		setGreen(0)
-		setBlue(0)
+		// 直接写入文件关闭LED，绕过ledEnabled检查
+		ioutil.WriteFile(RedLEDPath, []byte("0"), 0644)
+		ioutil.WriteFile(GreenLEDPath, []byte("0"), 0644)
+		ioutil.WriteFile(BlueLEDPath, []byte("0"), 0644)
 		log.Println("SetLEDEnabled: 已关闭LED灯光")
 	}
 
