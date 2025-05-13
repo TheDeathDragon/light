@@ -10,9 +10,9 @@ import (
 
 // LED paths
 const (
-	BlueLEDPath  = "/sys/class/leds/sc27xx:blue/brightness"
-	GreenLEDPath = "/sys/class/leds/sc27xx:green/brightness"
-	RedLEDPath   = "/sys/class/leds/sc27xx:red/brightness"
+	BlueLEDPath  = "/sys/class/leds/blue/brightness"
+	GreenLEDPath = "/sys/class/leds/green/brightness"
+	RedLEDPath   = "/sys/class/leds/red/brightness"
 )
 
 // Effect types
