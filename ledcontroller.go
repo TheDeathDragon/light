@@ -202,7 +202,7 @@ func FadeColor(from, to Color, duration time.Duration, stop <-chan bool) error {
 	}
 
 	for step := 0; step <= steps; step++ {
-		// 更频繁地检查停止信号
+		// 更频繁地检查停止信号和effectActive状态
 		select {
 		case <-stop:
 			log.Println("FadeColor: 收到停止信号，关闭LED")
@@ -210,6 +210,16 @@ func FadeColor(from, to Color, duration time.Duration, stop <-chan bool) error {
 			setColor(ColorOff)
 			return nil
 		default:
+			// 检查全局effectActive状态
+			mutex.Lock()
+			active := effectActive
+			mutex.Unlock()
+			if !active {
+				log.Println("FadeColor: 检测到effectActive为false，主动退出")
+				setColor(ColorOff)
+				return nil
+			}
+
 			progress := float64(step) / float64(steps)
 
 			// Calculate intermediate color
@@ -237,6 +247,16 @@ func FadeColor(from, to Color, duration time.Duration, stop <-chan bool) error {
 					setColor(ColorOff)
 					return nil
 				case <-time.After(sleepTime):
+					// 在短暂睡眠后也检查effectActive状态
+					mutex.Lock()
+					active := effectActive
+					mutex.Unlock()
+					if !active {
+						log.Println("FadeColor: 在sleep期间检测到effectActive为false，主动退出")
+						setColor(ColorOff)
+						return nil
+					}
+
 					remainingTime -= sleepTime
 				}
 			}
@@ -255,13 +275,23 @@ func PulseColor(color Color, pulseCount int, pulseDuration time.Duration, stop <
 
 	for i := 0; pulseCount == 0 || i < pulseCount; i++ {
 		log.Printf("PulseColor: 第 %d 次脉冲", i+1)
-		// 在每次循环开始时检查停止信号
+		// 在每次循环开始时检查停止信号和effectActive状态
 		select {
 		case <-stop:
 			log.Println("PulseColor: 循环开始时收到停止信号，关闭LED")
 			setColor(ColorOff)
 			return nil
 		default:
+			// 检查全局effectActive状态
+			mutex.Lock()
+			active := effectActive
+			mutex.Unlock()
+			if !active {
+				log.Println("PulseColor: 检测到effectActive为false，主动退出")
+				setColor(ColorOff)
+				return nil
+			}
+
 			// 继续执行
 			log.Println("PulseColor: 继续执行")
 		}
@@ -274,13 +304,23 @@ func PulseColor(color Color, pulseCount int, pulseDuration time.Duration, stop <
 			return err
 		}
 
-		// 在每个阶段之间检查停止信号
+		// 在每个阶段之间检查停止信号和effectActive状态
 		select {
 		case <-stop:
 			log.Println("PulseColor: 亮起后收到停止信号，关闭LED")
 			setColor(ColorOff)
 			return nil
 		default:
+			// 检查全局effectActive状态
+			mutex.Lock()
+			active := effectActive
+			mutex.Unlock()
+			if !active {
+				log.Println("PulseColor: 亮起后检测到effectActive为false，主动退出")
+				setColor(ColorOff)
+				return nil
+			}
+
 			// 继续执行
 			log.Println("PulseColor: 继续执行")
 		}
@@ -292,6 +332,16 @@ func PulseColor(color Color, pulseCount int, pulseDuration time.Duration, stop <
 			setColor(ColorOff)
 			return err
 		}
+
+		// 每次完成一个完整呼吸周期后也检查一次effectActive
+		mutex.Lock()
+		active := effectActive
+		mutex.Unlock()
+		if !active {
+			log.Println("PulseColor: 完成周期后检测到effectActive为false，主动退出")
+			setColor(ColorOff)
+			return nil
+		}
 	}
 
 	log.Println("PulseColor: 脉冲效果完成")
@@ -300,32 +350,73 @@ func PulseColor(color Color, pulseCount int, pulseDuration time.Duration, stop <
 
 // BlinkColor implements a blinking effect for a specific color
 func BlinkColor(color Color, blinkCount int, onDuration, offDuration time.Duration, stop <-chan bool) error {
+	log.Printf("BlinkColor: 开始闪烁效果，颜色 %v, 次数 %d, 亮 %v, 灭 %v", color, blinkCount, onDuration, offDuration)
+
 	for i := 0; blinkCount == 0 || i < blinkCount; i++ {
+		log.Printf("BlinkColor: 第 %d 次闪烁", i+1)
+
+		// 检查停止信号和effectActive状态
 		select {
 		case <-stop:
+			log.Println("BlinkColor: 收到停止信号，关闭LED")
 			setColor(ColorOff)
 			return nil
 		default:
+			// 检查全局effectActive状态
+			mutex.Lock()
+			active := effectActive
+			mutex.Unlock()
+			if !active {
+				log.Println("BlinkColor: 检测到effectActive为false，主动退出")
+				setColor(ColorOff)
+				return nil
+			}
+
+			// 设置当前颜色并等待onDuration
 			setColor(color)
 		}
 
+		// 等待亮灯时间，期间检查停止信号
 		select {
 		case <-stop:
+			log.Println("BlinkColor: 亮灯期间收到停止信号，关闭LED")
 			setColor(ColorOff)
 			return nil
 		case <-time.After(onDuration):
+			// 检查全局effectActive状态
+			mutex.Lock()
+			active := effectActive
+			mutex.Unlock()
+			if !active {
+				log.Println("BlinkColor: 亮灯后检测到effectActive为false，主动退出")
+				setColor(ColorOff)
+				return nil
+			}
 		}
 
+		// 关闭LED并等待offDuration
 		setColor(ColorOff)
 
+		// 等待灭灯时间，期间检查停止信号
 		select {
 		case <-stop:
+			log.Println("BlinkColor: 灭灯期间收到停止信号，关闭LED")
 			setColor(ColorOff)
 			return nil
 		case <-time.After(offDuration):
+			// 检查全局effectActive状态
+			mutex.Lock()
+			active := effectActive
+			mutex.Unlock()
+			if !active {
+				log.Println("BlinkColor: 灭灯后检测到effectActive为false，主动退出")
+				setColor(ColorOff)
+				return nil
+			}
 		}
 	}
 
+	log.Println("BlinkColor: 闪烁效果完成")
 	return nil
 }
 
@@ -371,8 +462,12 @@ func CallNotificationEffect() error {
 func NotificationEffect() error {
 	return runTimedEffect(func(stop <-chan bool) {
 		log.Println("NotificationEffect: 开始通知效果")
-		PulseColor(ColorGreen, 0, 2*time.Second, stop)
-		// 确保在函数结束时关闭LED
+		err := PulseColor(ColorGreen, 0, 2*time.Second, stop)
+		if err != nil {
+			log.Printf("NotificationEffect: 执行PulseColor时出错: %v", err)
+		}
+
+		log.Println("NotificationEffect: PulseColor返回，确保LED关闭")
 		setColor(ColorOff)
 		return // 显式返回，确保goroutine结束
 	}, EFFECT_NOTIFICATION)
@@ -796,7 +891,13 @@ func BluetoothFailedEffect() error {
 // Green breathing effect with 1s transitions
 func WiFiConnectingEffect() error {
 	return runTimedEffect(func(stop <-chan bool) {
-		PulseColor(ColorGreen, 0, 2*time.Second+500*time.Millisecond, stop)
+		log.Println("WiFiConnectingEffect: 开始WiFi连接效果")
+		err := PulseColor(ColorGreen, 0, 2*time.Second+500*time.Millisecond, stop)
+		if err != nil {
+			log.Printf("WiFiConnectingEffect: 执行PulseColor时出错: %v", err)
+		}
+
+		log.Println("WiFiConnectingEffect: PulseColor返回，确保LED关闭")
 		setColor(ColorOff)
 		return // 显式返回，确保goroutine结束
 	}, EFFECT_WIFI_CONNECTING)
@@ -1036,7 +1137,13 @@ func PartyEffect() error {
 // Red breathing (1s brighten, 1s dim), continuously until stopped
 func ChargingLowBatteryEffect() error {
 	return runTimedEffect(func(stop <-chan bool) {
-		PulseColor(ColorRed, 0, 2*time.Second, stop)
+		log.Println("ChargingLowBatteryEffect: 开始执行")
+		err := PulseColor(ColorRed, 0, 2*time.Second, stop)
+		if err != nil {
+			log.Printf("ChargingLowBatteryEffect: 执行PulseColor时出错: %v", err)
+		}
+
+		log.Println("ChargingLowBatteryEffect: PulseColor返回，确保LED关闭")
 		setColor(ColorOff)
 		return // 显式返回，确保goroutine结束
 	}, EFFECT_CHARGING_LOW)
@@ -1046,7 +1153,13 @@ func ChargingLowBatteryEffect() error {
 // Green breathing (1s brighten, 1s dim), continuously until stopped
 func ChargingHighBatteryEffect() error {
 	return runTimedEffect(func(stop <-chan bool) {
-		PulseColor(ColorGreen, 0, 2*time.Second, stop)
+		log.Println("ChargingHighBatteryEffect: 开始执行")
+		err := PulseColor(ColorGreen, 0, 2*time.Second, stop)
+		if err != nil {
+			log.Printf("ChargingHighBatteryEffect: 执行PulseColor时出错: %v", err)
+		}
+
+		log.Println("ChargingHighBatteryEffect: PulseColor返回，确保LED关闭")
 		setColor(ColorOff)
 		return // 显式返回，确保goroutine结束
 	}, EFFECT_CHARGING_HIGH)
