@@ -10,9 +10,9 @@ import (
 
 // LED paths
 const (
-	BlueLEDPath  = "/sys/class/leds/blue/brightness"
-	GreenLEDPath = "/sys/class/leds/green/brightness"
-	RedLEDPath   = "/sys/class/leds/red/brightness"
+	BlueLEDPath  = "/sys/devices/platform/11016000.i2c5/i2c-5/5-0034/mt6370_pmu_rgbled/leds/mt6370_pmu_led3/brightness"
+	GreenLEDPath = "/sys/devices/platform/11016000.i2c5/i2c-5/5-0034/mt6370_pmu_rgbled/leds/mt6370_pmu_led2/brightness"
+	RedLEDPath   = "/sys/devices/platform/11016000.i2c5/i2c-5/5-0034/mt6370_pmu_rgbled/leds/mt6370_pmu_led1/brightness"
 )
 
 // Effect types
